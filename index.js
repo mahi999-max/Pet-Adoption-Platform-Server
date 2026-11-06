@@ -218,37 +218,81 @@ app.patch("/adoptRequest/:id", async (req, res) => {
     const { id } = req.params;
     const { status, ownerEmail } = req.body;
 
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "Invalid request ID" });
+    }
+
     if (!["approved", "canceled"].includes(status)) {
       return res.status(400).send({ message: "Invalid status" });
     }
 
-    const filter = { _id: new ObjectId(id), ownerEmail, status: "pending" };
+    if (!ownerEmail) {
+      return res.status(400).send({ message: "ownerEmail is required" });
+    }
+
+    const filter = {
+      _id: new ObjectId(id),
+      ownerEmail,
+      status: "pending",
+    };
 
     const request = await adoptRequestCollection.findOne(filter);
+
     if (!request) {
-      return res.send({ acknowledged: true, matchedCount: 0, modifiedCount: 0 });
+      return res.send({
+        acknowledged: true,
+        matchedCount: 0,
+        modifiedCount: 0,
+      });
     }
 
-    const result = await adoptRequestCollection.updateOne(filter, { $set: { status } });
+    // নির্দিষ্ট request-এর status update
+    const result = await adoptRequestCollection.updateOne(
+      filter,
+      { $set: { status } }
+    );
 
     if (status === "approved" && result.modifiedCount > 0) {
-      // পেটটা এখন আর পাওয়া যাবে না
+
+      // Pet-এর adoption status adopted হবে
       await PetsCollection.updateOne(
-        { _id: new ObjectId(request.petId) },
-        { $set: { adoptionStatus: "adopted" } }
+        {
+          _id: new ObjectId(request.petId),
+        },
+        {
+          $set: { adoptionStatus: "adopted" },
+        }
       );
 
-      // একই পেটের বাকি pending রিকোয়েস্ট বাতিল (চাইলে এই অংশ মুছে দিতে পারেন)
-      await adoptRequestCollection.updateMany(
-        { petId: request.petId, status: "pending" },
-        { $set: { status: "canceled" } }
+      // একই Pet-এর অন্য সব pending request canceled হবে
+      const cancelResult = await adoptRequestCollection.updateMany(
+        {
+          petId: request.petId,
+          ownerEmail,
+          status: "pending",
+          _id: { $ne: new ObjectId(id) },
+        },
+        {
+          $set: { status: "canceled" },
+        }
       );
+
+      return res.send({
+        acknowledged: true,
+        modifiedCount: result.modifiedCount,
+        canceledCount: cancelResult.modifiedCount,
+      });
     }
 
+    // শুধু Cancel করলে এই request-টিই cancel হবে
     res.send(result);
+
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: "Failed to update adoption request" });
+
+    res.status(500).send({
+      message: "Failed to update adoption request",
+    });
   }
 });
 
