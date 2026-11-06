@@ -19,10 +19,6 @@ export async function connectToMongoDB() {
   }
 }
 
-// Call this only when your application terminates
-// export async function disconnectFromMongoDB() {
-//   await client.close();
-// }
   
 const database=client.db('pet-adoption-platform')
 const PetsCollection=database.collection('allPets')
@@ -296,9 +292,15 @@ app.patch("/adoptRequest/:id", async (req, res) => {
   }
 });
 
+// MongoDB connection
+connectToMongoDB();
 
-connectToMongoDB()
+// Vercel-এর জন্য Express app export
+export default app;
 
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`)
-})
+// Local development-এর জন্য
+if (process.env.NODE_ENV !== "production") {
+  app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+  });
+}
