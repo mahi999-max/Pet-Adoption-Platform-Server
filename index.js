@@ -90,6 +90,9 @@ app.post('/adoptRequest',async(req,res)=>{
         message:'Pet not found'
       })
     }
+      if (pet.adoptionStatus === "adopted") {
+        return res.status(409).send({ message: "This pet is no longer available" })
+    }
     if(pet.ownerEmail===requesterEmail){
         return res.status(403).send({
             message: "You cannot buy your own pet"
@@ -139,6 +142,32 @@ app.get("/myAdoptRequests", async (req, res) => {
   }
 });
 
+app.get("/myIncomingRequests", async (req, res) => {
+  try {
+    const { ownerEmail } = req.query;
+
+    if (!ownerEmail) {
+      return res.status(400).send({
+        message: "ownerEmail is required",
+      });
+    }
+
+    const requests = await adoptRequestCollection
+      .find({
+        ownerEmail,
+        status: "pending",
+      })
+      .toArray();
+
+    res.send(requests);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({
+      message: "Failed to load incoming requests",
+    });
+  }
+});
+
 app.get("/myRequests", async (req, res) => {
   try {
     const { requesterEmail } = req.query;
@@ -153,6 +182,73 @@ app.get("/myRequests", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).send({ message: "Failed to load requests" });
+  }
+});
+
+app.get("/incomingRequests", async (req, res) => {
+  try {
+    const { ownerEmail, petId } = req.query;
+
+    if (!ownerEmail || !petId) {
+      return res.status(400).send({
+        message: "ownerEmail and petId are required",
+      });
+    }
+
+    const requests = await adoptRequestCollection
+      .find({
+        ownerEmail,
+        petId,
+        status: "pending",
+      })
+      .sort({ requestDate: -1 })
+      .toArray();
+
+    res.send(requests);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({
+      message: "Failed to load incoming requests",
+    });
+  }
+});
+
+app.patch("/adoptRequest/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, ownerEmail } = req.body;
+
+    if (!["approved", "canceled"].includes(status)) {
+      return res.status(400).send({ message: "Invalid status" });
+    }
+
+    const filter = { _id: new ObjectId(id), ownerEmail, status: "pending" };
+
+    const request = await adoptRequestCollection.findOne(filter);
+    if (!request) {
+      return res.send({ acknowledged: true, matchedCount: 0, modifiedCount: 0 });
+    }
+
+    const result = await adoptRequestCollection.updateOne(filter, { $set: { status } });
+
+    if (status === "approved" && result.modifiedCount > 0) {
+      // পেটটা এখন আর পাওয়া যাবে না
+      await PetsCollection.updateOne(
+        { _id: new ObjectId(request.petId) },
+        { $set: { adoptionStatus: "adopted" } }
+      );
+
+      // একই পেটের বাকি pending রিকোয়েস্ট বাতিল (চাইলে এই অংশ মুছে দিতে পারেন)
+      await adoptRequestCollection.updateMany(
+        { petId: request.petId, status: "pending" },
+        { $set: { status: "canceled" } }
+      );
+    }
+
+    res.send(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to update adoption request" });
   }
 });
 
